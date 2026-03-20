@@ -289,6 +289,7 @@ function instTxForMonth(inst, month){
       date:`${month}-${day}`,
       status:'pending',
       fromInstallment:inst.id,
+      walletId:inst.walletId||'',
     };
   }
   return null;
@@ -667,20 +668,26 @@ VIEWS.transactions=function(el){
       ${statCardHTML('Previsão',previsao,previsao>=0?'var(--green)':'var(--red)','(todos os lançamentos)','📅')}
     </div>
 
-    <!-- Category pills -->
-    ${catsSorted.length>0?`<div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.6px;text-transform:uppercase;margin-bottom:8px">Por categoria</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <button class="filter-pill${!txCatFilter?' active':''}" onclick="txCatFilter='';refresh()">Todas</button>
+    <!-- Category cards row -->
+    ${catsSorted.length>0?`<div style="margin-bottom:16px">
+      <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">
+        <div onclick="txCatFilter='';refresh()" style="flex-shrink:0;background:${!txCatFilter?'var(--green)':'var(--card)'};border:1.5px solid ${!txCatFilter?'var(--green)':'var(--border)'};border-radius:10px;padding:10px 14px;cursor:pointer;min-width:80px;text-align:center">
+          <div style="font-size:18px;margin-bottom:2px">🗂</div>
+          <div style="font-size:11px;font-weight:700;color:${!txCatFilter?'#fff':'var(--text2)'};white-space:nowrap">Todas</div>
+          <div class="mono" style="font-size:12px;font-weight:700;color:${!txCatFilter?'#fff':'var(--text)'};">${fmt(totalExp)}</div>
+        </div>
         ${catsSorted.map(([catId,total])=>{
           const cat=cm[catId];
           const pct=totalExp>0?Math.round((total/totalExp)*100):0;
-          return `<button onclick="txCatFilter='${catId}';refresh()" style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;border:1.5px solid ${txCatFilter===catId?'var(--green)':'var(--border)'};background:${txCatFilter===catId?'var(--green-bg)':'var(--card)'};cursor:pointer;font-size:12px;font-weight:600;color:${txCatFilter===catId?'var(--green)':'var(--text)'}">
-            <span>${cat?.i||'📦'}</span>
-            <span>${esc(cat?.l||catId)}</span>
-            <span class="mono" style="font-size:10px;color:${txCatFilter===catId?'var(--green)':'var(--text2)'}">${fmt(total)}</span>
-            <span style="font-size:10px;color:var(--text2)">${pct}%</span>
-          </button>`;
+          const active=txCatFilter===catId;
+          return `<div onclick="txCatFilter='${catId}';refresh()" style="flex-shrink:0;background:${active?'var(--green-bg)':'var(--card)'};border:1.5px solid ${active?'var(--green)':'var(--border)'};border-radius:10px;padding:10px 14px;cursor:pointer;min-width:90px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:18px">${cat?.i||'📦'}</span>
+              <span style="font-size:10px;font-weight:700;color:${active?'var(--green)':'var(--text2)'};background:${active?'var(--green-bg)':'var(--bg)'};padding:1px 5px;border-radius:99px">${pct}%</span>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:${active?'var(--green)':'var(--text2)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px">${esc(cat?.l||catId)}</div>
+            <div class="mono" style="font-size:12px;font-weight:700;color:${active?'var(--green)':'var(--text)'};margin-top:1px">${fmt(total)}</div>
+          </div>`;
         }).join('')}
       </div>
     </div>`:''}
