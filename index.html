@@ -546,7 +546,7 @@ function txRowHTML(t, cat, showActions=true){
       </div>
       ${showActions?`
         ${!isPaid&&!t.fromInstallment?`<button class="btn btn-amber btn-sm" onclick="markPaid('${t.id}')" title="Marcar como pago">✓ pagar</button>`:''}
-        ${t.fromInstallment&&!isPaid?`<button class="btn btn-amber btn-sm" onclick="markInstPaid('${t.fromInstallment}','${t.date.slice(0,7)}')" title="Marcar como pago">✓ pagar</button>`:''}
+        ${t.fromInstallment&&!isPaid?`<button class="btn btn-amber btn-sm" onclick="markInstPaid('${t.fromInstallment}','${t.date.slice(0,7)}')" title="Marcar como pago">✓ pagar</button><button class="btn btn-ghost btn-sm" onclick="openInstModal('${t.fromInstallment}')" title="Editar parcelamento">✏</button>`:''}
         ${t.fromInstallment&&isPaid?`<button class="btn btn-ghost btn-sm" onclick="editInstPayment('${t.fromInstallment}','${t.date.slice(0,7)}')" title="Editar pagamento">✏</button>`:''}
         ${!t.fromInstallment?`
           <button class="btn btn-ghost btn-sm" onclick="openQuickEdit('${t.id}')" title="Editar">✏</button>
@@ -803,6 +803,17 @@ window.openQuickEdit=function(id){
     '<div id="qe-total-result" class="info-box" style="display:'+(fees>0?'block':'none')+'">' +
     'Total pago: <span class="mono" id="qe-total-val" style="font-weight:700">'+fmt(tx.amount+fees)+'</span></div>'
   ) : '';
+  // Extra fields shown when pending user switches to paid
+  const switchToPaidFields = !isPaid ? (
+    '<div id="qe-extra-paid" style="display:none">' +
+    '<div class="grid2">' +
+    '<div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="qe-new-paid-date" value="'+todayStr()+'"></div>' +
+    '<div class="fg"><label>Multa + Juros (R$)</label><input class="input mono" id="qe-fees" value="" placeholder="0,00" oninput="recalcQE()"></div>' +
+    '</div>' +
+    '<div id="qe-total-result" class="info-box" style="display:none">' +
+    'Total pago: <span class="mono" id="qe-total-val" style="font-weight:700"></span></div>' +
+    '</div>'
+  ) : '';
   openModal(
     '<div class="modal-title">✏ Editar Transação</div>' +
     '<div style="background:var(--bg);border-radius:8px;padding:10px 13px;margin-bottom:16px;font-size:12px;color:var(--text2)">' +
@@ -822,9 +833,7 @@ window.openQuickEdit=function(id){
     '<option value="pending"'+(tx.status==='pending'?' selected':'')+'>⏳ Pendente</option>' +
     '<option value="paid"'+(tx.status==='paid'?' selected':'')+'>✓ Pago</option>' +
     '</select></div>' +
-    '<div id="qe-extra-paid" style="display:'+(isPaid?'none':'none')+'">' +
-    '<div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="qe-new-paid-date" value="'+todayStr()+'"></div>' +
-    '</div>' +
+    switchToPaidFields +
     '<input type="hidden" id="qe-id" value="'+id+'">' +
     '<div class="flex gap8" style="justify-content:flex-end;margin-top:4px">' +
     '<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>' +
@@ -838,6 +847,11 @@ window.toggleQEPaidFields=function(){
   const status=document.getElementById('qe-status')?.value;
   const extra=document.getElementById('qe-extra-paid');
   if(extra) extra.style.display=status==='paid'?'block':'none';
+  if(status==='pending'){
+    // Clear total result if switching back to pending
+    const res=document.getElementById('qe-total-result');
+    if(res) res.style.display='none';
+  }
 };
 
 window.recalcQE=function(){
