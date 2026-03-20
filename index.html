@@ -437,7 +437,7 @@ function openModal(html){
   document.body.appendChild(bg);
   return bg;
 }
-function closeModal(){ document.querySelector('.modal-bg')?.remove(); }
+function closeModal(){ document.querySelector('.modal-bg')?.remove(); _instActive=false; }
 
 // ═══════════ DASHBOARD ═══════════
 const VIEWS={};
@@ -711,6 +711,8 @@ window.openTxModal=function(id){
   const tx=id?(STATE.transactions||[]).find(t=>t.id===id):null;
   const ecats=expCats(); const icats=incCats();
   const type=tx?.type||'expense';
+  const cards=STATE.cards||[];
+  const isInst=!!tx?.fromInstallment;
   openModal(`
     <div class="modal-title">${id?'Editar':'Nova'} Transação</div>
     <div class="fg"><label>Tipo</label>
@@ -721,23 +723,78 @@ window.openTxModal=function(id){
     </div>
     <input type="hidden" id="tx-type" value="${type}">
     <div class="fg"><label>Descrição</label><input class="input" id="tx-desc" placeholder="Ex: Conta de luz" value="${esc(tx?.description||'')}"></div>
-    <div class="grid2">
-      <div class="fg"><label>Valor (R$)</label><input class="input mono" id="tx-amount" placeholder="0,00" value="${tx?.amount||''}"></div>
-      <div class="fg"><label>Vencimento</label><input class="input" type="date" id="tx-date" value="${tx?.date||todayStr()}"></div>
+
+    <!-- Parcelado toggle — só aparece em despesas -->
+    <div id="inst-toggle-wrap" style="display:${type==='expense'&&!id?'block':'none'}">
+      <div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 13px;margin-bottom:14px;cursor:pointer" onclick="toggleInstFields()">
+        <div id="inst-toggle-box" style="width:18px;height:18px;border-radius:5px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .15s"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--text)">💳 Parcelado no cartão</span>
+      </div>
     </div>
+
+    <!-- Campos de parcelamento -->
+    <div id="inst-fields" style="display:none;background:var(--purple-bg);border:1.5px solid #7C6EFF28;border-radius:var(--radius-sm);padding:14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--purple);margin-bottom:12px;letter-spacing:.5px;text-transform:uppercase">Configurar Parcelamento</div>
+
+      <div style="display:flex;gap:6px;background:var(--bg);border-radius:6px;padding:3px;margin-bottom:12px">
+        <button id="calc-by-total" class="btn" onclick="setCalcMode('total')" style="flex:1;padding:6px;font-size:12px;background:var(--purple);color:#fff;border-radius:4px">Total ÷ parcelas</button>
+        <button id="calc-by-parc"  class="btn" onclick="setCalcMode('parc')"  style="flex:1;padding:6px;font-size:12px;background:transparent;color:var(--text2)">Parcela × qtd</button>
+      </div>
+      <input type="hidden" id="calc-mode" value="total">
+
+      <div class="grid2" id="inst-inputs-total">
+        <div class="fg" style="margin-bottom:10px"><label>Valor Total (R$)</label><input class="input mono" id="inst-total-val" placeholder="0,00" oninput="recalcInst('total')"></div>
+        <div class="fg" style="margin-bottom:10px"><label>Nº de Parcelas</label><input class="input mono" id="inst-count-val" type="number" min="1" max="360" placeholder="Ex: 12" oninput="recalcInst('total')"></div>
+      </div>
+      <div class="grid2" id="inst-inputs-parc" style="display:none">
+        <div class="fg" style="margin-bottom:10px"><label>Valor da Parcela (R$)</label><input class="input mono" id="inst-parc-val" placeholder="0,00" oninput="recalcInst('parc')"></div>
+        <div class="fg" style="margin-bottom:10px"><label>Nº de Parcelas</label><input class="input mono" id="inst-count-val2" type="number" min="1" max="360" placeholder="Ex: 12" oninput="recalcInst('parc')"></div>
+      </div>
+
+      <div id="inst-calc-result" style="display:none;background:var(--card);border-radius:6px;padding:10px 12px;margin-bottom:12px">
+        <div class="flex-between">
+          <span style="font-size:12px;color:var(--text2)">Parcela mensal:</span>
+          <span class="mono" id="res-parc" style="font-weight:700;color:var(--purple);font-size:14px"></span>
+        </div>
+        <div class="flex-between" style="margin-top:4px">
+          <span style="font-size:12px;color:var(--text2)">Total:</span>
+          <span class="mono" id="res-total" style="font-weight:700;color:var(--text);font-size:13px"></span>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="fg" style="margin-bottom:0"><label>Mês 1ª parcela</label><input class="input" type="month" id="inst-start-month" value="${curMonth()}"></div>
+        <div class="fg" style="margin-bottom:0"><label>Dia vencimento</label><input class="input mono" id="inst-due-day" type="number" min="1" max="31" placeholder="Ex: 10"></div>
+      </div>
+      ${cards.length?`<div class="fg" style="margin-bottom:0;margin-top:12px"><label>Cartão</label>
+        <select class="select" id="inst-card-sel">
+          <option value="">— Selecione o cartão —</option>
+          ${cards.map(c=>`<option value="${c.id}">${c.icon||'💳'} ${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>`:'<div style="font-size:12px;color:var(--text2);margin-top:10px">💡 Cadastre seus cartões na seção <strong>Contas & Cartões</strong> para vinculá-los.</div>'}
+    </div>
+
+    <!-- Valor simples (quando não é parcelado) -->
+    <div id="simple-amount-wrap">
+      <div class="grid2">
+        <div class="fg"><label>Valor (R$)</label><input class="input mono" id="tx-amount" placeholder="0,00" value="${tx?.amount||''}"></div>
+        <div class="fg"><label>Vencimento</label><input class="input" type="date" id="tx-date" value="${tx?.date||todayStr()}"></div>
+      </div>
+    </div>
+
     <div class="fg"><label>Categoria</label>
       <select class="select" id="tx-cat">
         <optgroup label="── Despesas ──" id="og-expense">${ecats.map(c=>`<option value="${c.id}" ${tx?.category===c.id?'selected':''}>${c.i} ${esc(c.l)}</option>`).join('')}</optgroup>
         <optgroup label="── Receitas ──" id="og-income">${icats.map(c=>`<option value="${c.id}" ${tx?.category===c.id?'selected':''}>${c.i} ${esc(c.l)}</option>`).join('')}</optgroup>
       </select>
     </div>
-    <div class="fg"><label>Status</label>
+    <div id="status-wrap" class="fg"><label>Status</label>
       <select class="select" id="tx-status">
         <option value="pending" ${(!tx||tx.status==='pending')?'selected':''}>⏳ Pendente</option>
         <option value="paid" ${tx?.status==='paid'?'selected':''}>✓ Pago</option>
       </select>
     </div>
-    <div class="fg"><label>Conta / Cartão (opcional)</label>
+    <div id="wallet-wrap" class="fg"><label>Conta / Cartão (opcional)</label>
       <select class="select" id="tx-wallet">
         <option value="">— Nenhum —</option>
         ${(STATE.accounts||[]).length?'<optgroup label="── Contas ──">'+((STATE.accounts||[]).map(a=>`<option value="acc_${a.id}" ${tx?.walletId===('acc_'+a.id)?'selected':''}>${a.icon||'🏦'} ${esc(a.name)}</option>`).join(''))+'</optgroup>':''}
@@ -749,6 +806,68 @@ window.openTxModal=function(id){
       <button class="btn btn-green" onclick="saveTx('${id||''}')">Salvar</button>
     </div>`);
   setTimeout(()=>document.getElementById('tx-desc')?.focus(),50);
+};
+
+// Toggle installment fields
+let _instActive=false;
+window.toggleInstFields=function(){
+  _instActive=!_instActive;
+  const box=document.getElementById('inst-toggle-box');
+  const fields=document.getElementById('inst-fields');
+  const simpleAmt=document.getElementById('simple-amount-wrap');
+  const statusWrap=document.getElementById('status-wrap');
+  const walletWrap=document.getElementById('wallet-wrap');
+  if(_instActive){
+    box.style.background='var(--purple)';
+    box.style.borderColor='var(--purple)';
+    box.textContent='✓';
+    fields.style.display='block';
+    simpleAmt.style.display='none';
+    statusWrap.style.display='none';
+    walletWrap.style.display='none';
+  } else {
+    box.style.background='var(--card)';
+    box.style.borderColor='var(--border)';
+    box.textContent='';
+    fields.style.display='none';
+    simpleAmt.style.display='block';
+    statusWrap.style.display='block';
+    walletWrap.style.display='block';
+  }
+};
+
+window.setCalcMode=function(mode){
+  document.getElementById('calc-mode').value=mode;
+  document.getElementById('inst-inputs-total').style.display=mode==='total'?'grid':'none';
+  document.getElementById('inst-inputs-parc').style.display=mode==='parc'?'grid':'none';
+  document.getElementById('calc-by-total').style.background=mode==='total'?'var(--purple)':'transparent';
+  document.getElementById('calc-by-total').style.color=mode==='total'?'#fff':'var(--text2)';
+  document.getElementById('calc-by-parc').style.background=mode==='parc'?'var(--purple)':'transparent';
+  document.getElementById('calc-by-parc').style.color=mode==='parc'?'#fff':'var(--text2)';
+  document.getElementById('inst-calc-result').style.display='none';
+};
+
+window.recalcInst=function(mode){
+  const result=document.getElementById('inst-calc-result');
+  const resParc=document.getElementById('res-parc');
+  const resTotal=document.getElementById('res-total');
+  if(mode==='total'){
+    const total=parseFloat(document.getElementById('inst-total-val').value.replace(',','.'));
+    const count=parseInt(document.getElementById('inst-count-val').value);
+    if(!isNaN(total)&&!isNaN(count)&&count>0&&total>0){
+      result.style.display='block';
+      resParc.textContent=fmt(total/count);
+      resTotal.textContent=fmt(total);
+    } else result.style.display='none';
+  } else {
+    const parc=parseFloat(document.getElementById('inst-parc-val').value.replace(',','.'));
+    const count=parseInt(document.getElementById('inst-count-val2').value);
+    if(!isNaN(parc)&&!isNaN(count)&&count>0&&parc>0){
+      result.style.display='block';
+      resParc.textContent=fmt(parc);
+      resTotal.textContent=fmt(parc*count);
+    } else result.style.display='none';
+  }
 };
 
 window.switchTxType=function(type){
@@ -764,19 +883,53 @@ window.switchTxType=function(type){
     btn.style.color=active?'#fff':'var(--text2)';
     btn.style.border=active?'none':'1.5px solid var(--border)';
   });
+  // Show/hide installment toggle for expenses only
+  const wrap=document.getElementById('inst-toggle-wrap');
+  if(wrap) wrap.style.display=type==='expense'?'block':'none';
+  // If switching to income, reset installment
+  if(type==='income'&&_instActive) toggleInstFields();
 };
 
 window.saveTx=async function(id){
   const type=document.getElementById('tx-type').value;
   const desc=document.getElementById('tx-desc').value.trim();
+  const category=document.getElementById('tx-cat').value;
+  if(!desc) return;
+
+  // Check if installment mode is active
+  if(_instActive&&type==='expense'&&!id){
+    const mode=document.getElementById('calc-mode').value;
+    let total,parcela,count;
+    if(mode==='total'){
+      total=parseFloat(document.getElementById('inst-total-val').value.replace(',','.'));
+      count=parseInt(document.getElementById('inst-count-val').value);
+      parcela=total/count;
+    } else {
+      parcela=parseFloat(document.getElementById('inst-parc-val').value.replace(',','.'));
+      count=parseInt(document.getElementById('inst-count-val2').value);
+      total=parcela*count;
+    }
+    if(isNaN(total)||total<=0||isNaN(count)||count<1){alert('Preencha valor e número de parcelas.');return;}
+    const startMonth=document.getElementById('inst-start-month').value;
+    const dueDay=parseInt(document.getElementById('inst-due-day').value)||1;
+    const cardSelEl=document.getElementById('inst-card-sel');
+    const cardId=cardSelEl?cardSelEl.value:'';
+    const walletId=cardId?('card_'+cardId):'';
+    const instItem={id:genId(),name:desc,total:parseFloat(total.toFixed(2)),count,amount:parseFloat(parcela.toFixed(2)),startMonth,dueDay,category,walletId};
+    await saveItem('installments',instItem);
+    _instActive=false;
+    closeModal(); refresh();
+    return;
+  }
+
   const amount=parseFloat(document.getElementById('tx-amount').value.replace(',','.'));
   const date=document.getElementById('tx-date').value;
-  const category=document.getElementById('tx-cat').value;
   const status=document.getElementById('tx-status').value;
   const walletId=document.getElementById('tx-wallet')?.value||'';
-  if(!desc||isNaN(amount)||amount<=0) return;
+  if(isNaN(amount)||amount<=0) return;
   const item={id:id||genId(),type,description:desc,amount,category,date,status,walletId};
   await saveItem('transactions',item);
+  _instActive=false;
   closeModal(); refresh();
 };
 
