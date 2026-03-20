@@ -208,6 +208,7 @@ label{font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.6px;text
     <button class="nav-btn" data-view="budget" onclick="navigate('budget')"><span class="nav-icon">▤</span>Orçamento</button>
     <button class="nav-btn" data-view="goals" onclick="navigate('goals')"><span class="nav-icon">◎</span>Metas</button>
     <button class="nav-btn" data-view="installments" onclick="navigate('installments')"><span class="nav-icon">⋯</span>Parcelas</button>
+    <button class="nav-btn" data-view="accounts" onclick="navigate('accounts')"><span class="nav-icon">🏦</span>Contas</button>
     <button class="nav-btn" data-view="categories" onclick="navigate('categories')"><span class="nav-icon">🏷</span>Categorias</button>
     <div style="flex:1"></div>
     <button class="nav-btn" onclick="signOut()" title="Sair"><span class="nav-icon">⎋</span>Sair</button>
@@ -257,6 +258,20 @@ const DEFAULT_CATS = [
 
 function catMap(){ const m={}; (STATE.categories||DEFAULT_CATS).forEach(c=>m[c.id]=c); return m; }
 function expCats(){ return (STATE.categories||DEFAULT_CATS).filter(c=>c.t==='e'); }
+function walletLabel(wid){
+  if(!wid) return '';
+  if(wid.startsWith('acc_')){
+    const id=wid.slice(4);
+    const a=(STATE.accounts||[]).find(x=>x.id===id);
+    return a?(a.icon||'🏦')+' '+a.name:'';
+  }
+  if(wid.startsWith('card_')){
+    const id=wid.slice(5);
+    const c=(STATE.cards||[]).find(x=>x.id===id);
+    return c?(c.icon||'💳')+' '+c.name:'';
+  }
+  return '';
+}
 function incCats(){ return (STATE.categories||DEFAULT_CATS).filter(c=>c.t==='i'); }
 
 // ═══════════ INSTALLMENT VIRTUAL TX ═══════════
@@ -296,19 +311,23 @@ function getMonthTxs(month){
 function userCol(col){ return db.collection('financas').doc(UID).collection(col); }
 
 async function loadAll(){
-  const [txS,budS,goalS,instS,catS,ipS] = await Promise.all([
+  const [txS,budS,goalS,instS,catS,ipS,accS,cardS] = await Promise.all([
     userCol('transactions').get(),
     userCol('budgets').get(),
     userCol('goals').get(),
     userCol('installments').get(),
     userCol('categories').get(),
     userCol('instPayments').get(),
+    userCol('accounts').get(),
+    userCol('cards').get(),
   ]);
   STATE.transactions = txS.docs.map(d=>({id:d.id,...d.data()}));
   STATE.budgets      = budS.docs.map(d=>({id:d.id,...d.data()}));
   STATE.goals        = goalS.docs.map(d=>({id:d.id,...d.data()}));
   STATE.installments = instS.docs.map(d=>({id:d.id,...d.data()}));
   STATE.instPayments = ipS.docs.map(d=>({id:d.id,...d.data()}));
+  STATE.accounts     = accS.docs.map(d=>({id:d.id,...d.data()}));
+  STATE.cards        = cardS.docs.map(d=>({id:d.id,...d.data()}));
   STATE.categories   = catS.docs.length ? catS.docs.map(d=>({id:d.id,...d.data()})) : [...DEFAULT_CATS];
   if(!catS.docs.length){
     const batch=db.batch();
@@ -512,6 +531,7 @@ function txRowHTML(t, cat, showActions=true){
         <div class="flex gap6" style="margin-top:3px;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--text2)">${t.date.split('-').reverse().join('/')} · ${esc(cat?.l||t.category)}</span>
           ${t.fromInstallment?'<span class="tag tag-inst">parcelado</span>':''}
+          ${t.walletId?`<span style="font-size:11px;color:var(--text2)">${walletLabel(t.walletId)}</span>`:''}
           ${t.recurringId?'<span class="tag tag-recurring">fixo</span>':''}
           <span class="tag ${isPaid?'tag-paid':'tag-pending'}">${isPaid?'✓ pago':'⏳ pendente'}</span>
           ${isPaid&&t.paidDate?`<span style="font-size:11px;color:var(--text2)">pago em ${t.paidDate.split('-').reverse().join('/')}</span>`:''}
@@ -717,6 +737,13 @@ window.openTxModal=function(id){
         <option value="paid" ${tx?.status==='paid'?'selected':''}>✓ Pago</option>
       </select>
     </div>
+    <div class="fg"><label>Conta / Cartão (opcional)</label>
+      <select class="select" id="tx-wallet">
+        <option value="">— Nenhum —</option>
+        ${(STATE.accounts||[]).length?'<optgroup label="── Contas ──">'+((STATE.accounts||[]).map(a=>`<option value="acc_${a.id}" ${tx?.walletId===('acc_'+a.id)?'selected':''}>${a.icon||'🏦'} ${esc(a.name)}</option>`).join(''))+'</optgroup>':''}
+        ${(STATE.cards||[]).length?'<optgroup label="── Cartões ──">'+((STATE.cards||[]).map(c=>`<option value="card_${c.id}" ${tx?.walletId===('card_'+c.id)?'selected':''}>${c.icon||'💳'} ${esc(c.name)}</option>`).join(''))+'</optgroup>':''}
+      </select>
+    </div>
     <div class="flex gap8" style="justify-content:flex-end;margin-top:4px">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-green" onclick="saveTx('${id||''}')">Salvar</button>
@@ -746,8 +773,9 @@ window.saveTx=async function(id){
   const date=document.getElementById('tx-date').value;
   const category=document.getElementById('tx-cat').value;
   const status=document.getElementById('tx-status').value;
+  const walletId=document.getElementById('tx-wallet')?.value||'';
   if(!desc||isNaN(amount)||amount<=0) return;
-  const item={id:id||genId(),type,description:desc,amount,category,date,status};
+  const item={id:id||genId(),type,description:desc,amount,category,date,status,walletId};
   await saveItem('transactions',item);
   closeModal(); refresh();
 };
@@ -1127,6 +1155,234 @@ window.deleteInst=async function(id){
   const toDelete=(STATE.instPayments||[]).filter(p=>p.instId===id);
   for(const p of toDelete) await deleteItem('instPayments',p.id);
   refresh();
+};
+
+
+// ═══════════ ACCOUNTS & CARDS ═══════════
+const ACCOUNT_TYPES=[['corrente','Conta Corrente','🏦'],['poupanca','Poupança','🐷'],['carteira','Carteira','👛'],['investimento','Investimentos','📈'],['outro','Outro','💼']];
+const CARD_BRANDS=[['visa','Visa','💳'],['master','Mastercard','💳'],['elo','Elo','💳'],['amex','Amex','💎'],['outro','Outro','💳']];
+const ACCOUNT_COLORS=['#2AAF88','#3B82F6','#7C6EFF','#E8971A','#E05252','#EC4899','#0EA5E9','#10B981'];
+let accTab='accounts';
+
+VIEWS.accounts=function(el){
+  const accounts=STATE.accounts||[];
+  const cards=STATE.cards||[];
+  const txs=STATE.transactions||[];
+
+  // Compute balances per account
+  function accBalance(accId){
+    const paid=txs.filter(t=>t.walletId===('acc_'+accId)&&t.status==='paid');
+    const inc=paid.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+    const exp=paid.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount+(t.fine||0)+(t.interest||0),0);
+    return (parseFloat(accId in {} ? 0 : 0))+inc-exp;
+  }
+  function cardSpent(cardId, month){
+    return txs.filter(t=>t.walletId===('card_'+cardId)&&t.date.slice(0,7)===month).reduce((s,t)=>s+t.amount,0);
+  }
+
+  const totalAccBalance=accounts.reduce((s,a)=>{
+    const b=a.initialBalance||0;
+    const paid=txs.filter(t=>t.walletId===('acc_'+a.id)&&t.status==='paid');
+    const inc=paid.filter(t=>t.type==='income').reduce((s2,t)=>s2+t.amount,0);
+    const exp=paid.filter(t=>t.type==='expense').reduce((s2,t)=>s2+t.amount+(t.fine||0)+(t.interest||0),0);
+    return s+b+inc-exp;
+  },0);
+
+  el.innerHTML=`
+    ${pageHeaderHTML('Contas & Cartões',`patrimônio em contas: ${fmt(totalAccBalance)}`,'',false)}
+    <div class="tab-bar">
+      <button class="tab${accTab==='accounts'?' active':''}" onclick="accTab='accounts';refresh()">🏦 Contas (${accounts.length})</button>
+      <button class="tab${accTab==='cards'?' active':''}" onclick="accTab='cards';refresh()">💳 Cartões (${cards.length})</button>
+    </div>
+
+    ${accTab==='accounts'?`
+      <div style="margin-bottom:14px;display:flex;justify-content:flex-end">
+        <button class="btn btn-green" onclick="openAccountModal()">+ Nova Conta</button>
+      </div>
+      ${accounts.length===0?`<div class="card empty-state"><div class="empty-icon">🏦</div><div class="empty-title">Nenhuma conta cadastrada</div><div>Adicione suas contas bancárias, carteira ou poupança</div></div>`:''}
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${accounts.map(a=>{
+          const paid=txs.filter(t=>t.walletId===('acc_'+a.id)&&t.status==='paid');
+          const inc=paid.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+          const exp=paid.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount+(t.fine||0)+(t.interest||0),0);
+          const bal=(a.initialBalance||0)+inc-exp;
+          const typeInfo=ACCOUNT_TYPES.find(x=>x[0]===a.type)||ACCOUNT_TYPES[4];
+          return `<div class="card" style="border-left:4px solid ${a.color||'var(--green)'}">
+            <div class="flex-between">
+              <div class="flex gap12">
+                <div style="width:46px;height:46px;background:${a.color||'var(--green)'}20;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${a.icon||typeInfo[2]}</div>
+                <div>
+                  <div style="font-size:15px;font-weight:700">${esc(a.name)}</div>
+                  <div style="font-size:12px;color:var(--text2)">${typeInfo[1]}${a.bank?' · '+esc(a.bank):''}</div>
+                </div>
+              </div>
+              <div class="flex gap10">
+                <div style="text-align:right">
+                  <div class="mono" style="font-size:20px;font-weight:700;color:${bal>=0?'var(--green)':'var(--red)'}">${fmt(bal)}</div>
+                  <div style="font-size:11px;color:var(--text2)">saldo inicial: ${fmt(a.initialBalance||0)}</div>
+                </div>
+                <div class="flex gap6">
+                  <button class="btn btn-ghost btn-sm" onclick="openAccountModal('${a.id}')">✏</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}')">✕</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `:`
+      <div style="margin-bottom:14px;display:flex;justify-content:flex-end">
+        <button class="btn btn-green" onclick="openCardModal()">+ Novo Cartão</button>
+      </div>
+      ${cards.length===0?`<div class="card empty-state"><div class="empty-icon">💳</div><div class="empty-title">Nenhum cartão cadastrado</div><div>Adicione seus cartões de crédito para controlar a fatura</div></div>`:''}
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${cards.map(c=>{
+          const month=STATE.month;
+          const spent=txs.filter(t=>t.walletId===('card_'+c.id)&&t.date.slice(0,7)===month).reduce((s,t)=>s+t.amount,0);
+          const pct=c.limit?Math.min((spent/c.limit)*100,100):0;
+          const avail=c.limit?(c.limit-spent):null;
+          const brandInfo=CARD_BRANDS.find(x=>x[0]===c.brand)||CARD_BRANDS[4];
+          return `<div class="card" style="border-left:4px solid ${c.color||'var(--purple)'}">
+            <div class="flex-between" style="margin-bottom:${c.limit?'14px':'0'}">
+              <div class="flex gap12">
+                <div style="width:46px;height:46px;background:${c.color||'var(--purple)'}20;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${c.icon||'💳'}</div>
+                <div>
+                  <div style="font-size:15px;font-weight:700">${esc(c.name)}</div>
+                  <div style="font-size:12px;color:var(--text2)">${brandInfo[1]}${c.dueDay?' · vence dia '+c.dueDay:''}${c.closeDay?' · fecha dia '+c.closeDay:''}</div>
+                  ${c.last4?`<div style="font-size:11px;color:var(--text2);font-family:monospace">•••• ${esc(c.last4)}</div>`:''}
+                </div>
+              </div>
+              <div class="flex gap10">
+                <div style="text-align:right">
+                  <div class="mono" style="font-size:20px;font-weight:700;color:var(--purple)">${fmt(spent)}</div>
+                  <div style="font-size:11px;color:var(--text2)">fatura ${monthLabel(month)}${c.limit?' · limite '+fmt(c.limit):''}</div>
+                  ${avail!==null?`<div style="font-size:11px;color:${avail>=0?'var(--green)':'var(--red)'};font-weight:600">${avail>=0?fmt(avail)+' disponível':'LIMITE EXCEDIDO'}</div>`:''}
+                </div>
+                <div class="flex gap6">
+                  <button class="btn btn-ghost btn-sm" onclick="openCardModal('${c.id}')">✏</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteCard('${c.id}')">✕</button>
+                </div>
+              </div>
+            </div>
+            ${c.limit?`<div class="pbar"><div class="pfill" style="width:${pct}%;background:${pct>90?'var(--red)':pct>70?'var(--amber)':'var(--purple)'}"></div></div>
+            <div style="font-size:11px;color:var(--text2);margin-top:4px">${pct.toFixed(0)}% do limite utilizado em ${monthLabel(month)}</div>`:''}
+          </div>`;
+        }).join('')}
+      </div>
+    `}`;
+};
+
+// Account modal
+window.openAccountModal=function(id){
+  const acc=id?(STATE.accounts||[]).find(a=>a.id===id):null;
+  openModal(`
+    <div class="modal-title">${acc?'Editar':'Nova'} Conta</div>
+    <div class="fg"><label>Nome</label><input class="input" id="acc-name" placeholder="Ex: Nubank, Bradesco, Carteira" value="${esc(acc?.name||'')}"></div>
+    <div class="grid2">
+      <div class="fg"><label>Tipo</label>
+        <select class="select" id="acc-type">
+          ${ACCOUNT_TYPES.map(([v,l,i])=>`<option value="${v}" ${acc?.type===v?'selected':''}>${i} ${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Banco / Instituição</label><input class="input" id="acc-bank" placeholder="Ex: Nubank" value="${esc(acc?.bank||'')}"></div>
+    </div>
+    <div class="fg"><label>Saldo Inicial (R$)</label><input class="input mono" id="acc-balance" placeholder="0,00" value="${acc?.initialBalance||''}"></div>
+    <div class="fg"><label>Ícone</label>
+      <div class="flex gap8" style="flex-wrap:wrap" id="acc-icon-grid">
+        ${['🏦','🐷','👛','💰','📈','💼','🏧','💵'].map(ic=>`<button onclick="selAccIcon(this,'${ic}')" style="width:38px;height:38px;border-radius:8px;border:2px solid ${(acc?.icon||'🏦')===ic?'var(--green)':'var(--border)'};background:var(--bg);font-size:19px">${ic}</button>`).join('')}
+      </div>
+    </div>
+    <input type="hidden" id="acc-icon" value="${acc?.icon||'🏦'}">
+    <div class="fg"><label>Cor</label>
+      <div class="flex gap6" id="acc-color-grid">
+        ${ACCOUNT_COLORS.map(c=>`<div onclick="selAccColor(this,'${c}')" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${(acc?.color||ACCOUNT_COLORS[0])===c?'var(--text)':'transparent'};flex-shrink:0"></div>`).join('')}
+      </div>
+    </div>
+    <input type="hidden" id="acc-color" value="${acc?.color||ACCOUNT_COLORS[0]}">
+    <div class="flex gap8" style="justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="saveAccount('${id||''}')">Salvar</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('acc-name')?.focus(),50);
+};
+
+window.selAccIcon=function(btn,ic){
+  document.getElementById('acc-icon').value=ic;
+  document.querySelectorAll('#acc-icon-grid button').forEach(b=>{b.style.borderColor=b.textContent===ic?'var(--green)':'var(--border)';});
+};
+window.selAccColor=function(el,c){
+  document.getElementById('acc-color').value=c;
+  document.querySelectorAll('#acc-color-grid div').forEach(d=>{d.style.borderColor=d.style.background===c?'var(--text)':'transparent';});
+};
+window.saveAccount=async function(id){
+  const name=document.getElementById('acc-name').value.trim();
+  if(!name) return;
+  const initialBalance=parseFloat(document.getElementById('acc-balance').value.replace(',','.'))||0;
+  const item={id:id||genId(),name,type:document.getElementById('acc-type').value,bank:document.getElementById('acc-bank').value.trim(),initialBalance,icon:document.getElementById('acc-icon').value,color:document.getElementById('acc-color').value};
+  await saveItem('accounts',item);
+  closeModal(); refresh();
+};
+window.deleteAccount=async function(id){
+  if(!confirm('Excluir esta conta? As transações vinculadas não serão excluídas.')) return;
+  await deleteItem('accounts',id); refresh();
+};
+
+// Card modal
+window.openCardModal=function(id){
+  const card=id?(STATE.cards||[]).find(c=>c.id===id):null;
+  openModal(`
+    <div class="modal-title">${card?'Editar':'Novo'} Cartão de Crédito</div>
+    <div class="fg"><label>Nome do cartão</label><input class="input" id="card-name" placeholder="Ex: Nubank Roxinho, Inter Gold" value="${esc(card?.name||'')}"></div>
+    <div class="grid2">
+      <div class="fg"><label>Bandeira</label>
+        <select class="select" id="card-brand">
+          ${CARD_BRANDS.map(([v,l,i])=>`<option value="${v}" ${card?.brand===v?'selected':''}>${i} ${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>4 últimos dígitos</label><input class="input mono" id="card-last4" maxlength="4" placeholder="0000" value="${esc(card?.last4||'')}"></div>
+    </div>
+    <div class="grid3">
+      <div class="fg"><label>Limite (R$)</label><input class="input mono" id="card-limit" placeholder="0,00" value="${card?.limit||''}"></div>
+      <div class="fg"><label>Dia fechamento</label><input class="input mono" id="card-close" type="number" min="1" max="31" placeholder="Ex: 23" value="${card?.closeDay||''}"></div>
+      <div class="fg"><label>Dia vencimento</label><input class="input mono" id="card-due" type="number" min="1" max="31" placeholder="Ex: 10" value="${card?.dueDay||''}"></div>
+    </div>
+    <div class="fg"><label>Ícone</label>
+      <div class="flex gap8" style="flex-wrap:wrap" id="card-icon-grid">
+        ${['💳','💎','🌟','⭐','🔵','🟣','🔴','🟠'].map(ic=>`<button onclick="selCardIcon(this,'${ic}')" style="width:38px;height:38px;border-radius:8px;border:2px solid ${(card?.icon||'💳')===ic?'var(--green)':'var(--border)'};background:var(--bg);font-size:19px">${ic}</button>`).join('')}
+      </div>
+    </div>
+    <input type="hidden" id="card-icon" value="${card?.icon||'💳'}">
+    <div class="fg"><label>Cor</label>
+      <div class="flex gap6" id="card-color-grid">
+        ${ACCOUNT_COLORS.map(c=>`<div onclick="selCardColor(this,'${c}')" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${(card?.color||ACCOUNT_COLORS[3])===c?'var(--text)':'transparent'};flex-shrink:0"></div>`).join('')}
+      </div>
+    </div>
+    <input type="hidden" id="card-color" value="${card?.color||ACCOUNT_COLORS[3]}">
+    <div class="flex gap8" style="justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="saveCard('${id||''}')">Salvar</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('card-name')?.focus(),50);
+};
+
+window.selCardIcon=function(btn,ic){
+  document.getElementById('card-icon').value=ic;
+  document.querySelectorAll('#card-icon-grid button').forEach(b=>{b.style.borderColor=b.textContent===ic?'var(--green)':'var(--border)';});
+};
+window.selCardColor=function(el,c){
+  document.getElementById('card-color').value=c;
+  document.querySelectorAll('#card-color-grid div').forEach(d=>{d.style.borderColor=d.style.background===c?'var(--text)':'transparent';});
+};
+window.saveCard=async function(id){
+  const name=document.getElementById('card-name').value.trim();
+  if(!name) return;
+  const item={id:id||genId(),name,brand:document.getElementById('card-brand').value,last4:document.getElementById('card-last4').value.trim(),limit:parseFloat(document.getElementById('card-limit').value.replace(',','.'))||0,closeDay:parseInt(document.getElementById('card-close').value)||0,dueDay:parseInt(document.getElementById('card-due').value)||0,icon:document.getElementById('card-icon').value,color:document.getElementById('card-color').value};
+  await saveItem('cards',item);
+  closeModal(); refresh();
+};
+window.deleteCard=async function(id){
+  if(!confirm('Excluir este cartão? As transações vinculadas não serão excluídas.')) return;
+  await deleteItem('cards',id); refresh();
 };
 
 // ═══════════ CATEGORIES ═══════════
