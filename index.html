@@ -545,10 +545,10 @@ function txRowHTML(t, cat, showActions=true){
         ${hasExtra?`<div class="mono" style="font-size:10px;color:var(--text2);text-decoration:line-through">${fmt(t.amount)}</div>`:''}
       </div>
       ${showActions?`
-        ${!isPaid&&!t.fromInstallment?`<button class="btn btn-amber btn-sm" onclick="markPaid('${t.id}',false)" title="Marcar como pago">✓</button>`:''}
-        ${t.fromInstallment&&!isPaid?`<button class="btn btn-amber btn-sm" onclick="markInstPaid('${t.fromInstallment}','${t.date.slice(0,7)}')" title="Marcar como pago">✓</button>`:''}
+        ${!isPaid&&!t.fromInstallment?`<button class="btn btn-amber btn-sm" onclick="markPaid('${t.id}')" title="Marcar como pago">✓ pagar</button>`:''}
+        ${t.fromInstallment&&!isPaid?`<button class="btn btn-amber btn-sm" onclick="markInstPaid('${t.fromInstallment}','${t.date.slice(0,7)}')" title="Marcar como pago">✓ pagar</button>`:''}
         ${!t.fromInstallment?`
-          <button class="btn btn-ghost btn-sm" onclick="openTxModal('${t.id}')" title="Editar">✏</button>
+          <button class="btn btn-ghost btn-sm" onclick="openQuickEdit('${t.id}')" title="Editar valor/data">✏</button>
           <button class="btn btn-ghost btn-sm" onclick="openRepeatModal('${t.id}')" title="Repetir">↻</button>
           <button class="btn btn-danger btn-sm" onclick="deleteTx('${t.id}')" title="Excluir">✕</button>
         `:''}
@@ -598,41 +598,99 @@ VIEWS.transactions=function(el){
 };
 
 // Mark real transaction as paid
-window.markPaid=function(id, isLate){
+function feeModalHTML(title, warnHTML, prefixId, originalAmount){
+  return `
+    <div class="modal-title">${title}</div>
+    ${warnHTML}
+    <div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="${prefixId}-date" value="${todayStr()}"></div>
+    <div style="display:flex;gap:6px;background:var(--bg);border-radius:6px;padding:3px;margin-bottom:12px">
+      <button id="${prefixId}-mode-sep" class="btn" onclick="setFeeMode('${prefixId}','sep')" style="flex:1;padding:6px;font-size:12px;background:var(--amber);color:#fff;border-radius:4px">Multa + Juros separados</button>
+      <button id="${prefixId}-mode-tot" class="btn" onclick="setFeeMode('${prefixId}','tot')" style="flex:1;padding:6px;font-size:12px;background:transparent;color:var(--text2)">Total pago</button>
+    </div>
+    <input type="hidden" id="${prefixId}-fee-mode" value="sep">
+    <!-- Modo separado -->
+    <div id="${prefixId}-sep-fields">
+      <div class="grid2">
+        <div class="fg"><label>Multa (R$)</label><input class="input mono" id="${prefixId}-fine" placeholder="0,00" value="" oninput="calcFeeTotal('${prefixId}',${originalAmount})"></div>
+        <div class="fg"><label>Juros (R$)</label><input class="input mono" id="${prefixId}-interest" placeholder="0,00" value="" oninput="calcFeeTotal('${prefixId}',${originalAmount})"></div>
+      </div>
+      <div id="${prefixId}-sep-result" style="display:none;background:var(--amber-bg);border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:var(--amber);font-weight:600">
+        Total pago: <span class="mono" id="${prefixId}-sep-total"></span>
+      </div>
+    </div>
+    <!-- Modo total pago -->
+    <div id="${prefixId}-tot-fields" style="display:none">
+      <div class="fg"><label>Total efetivamente pago (R$)</label><input class="input mono" id="${prefixId}-total-paid" placeholder="0,00" oninput="calcFeeFromTotal('${prefixId}',${originalAmount})"></div>
+      <div id="${prefixId}-tot-result" style="display:none;background:var(--amber-bg);border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:var(--amber);font-weight:600">
+        Encargos calculados: multa <span class="mono" id="${prefixId}-calc-fine"></span> + juros <span class="mono" id="${prefixId}-calc-interest"></span>
+      </div>
+    </div>`;
+}
+
+window.setFeeMode=function(prefix, mode){
+  document.getElementById(`${prefix}-fee-mode`).value=mode;
+  document.getElementById(`${prefix}-sep-fields`).style.display=mode==='sep'?'block':'none';
+  document.getElementById(`${prefix}-tot-fields`).style.display=mode==='tot'?'block':'none';
+  document.getElementById(`${prefix}-mode-sep`).style.background=mode==='sep'?'var(--amber)':'transparent';
+  document.getElementById(`${prefix}-mode-sep`).style.color=mode==='sep'?'#fff':'var(--text2)';
+  document.getElementById(`${prefix}-mode-tot`).style.background=mode==='tot'?'var(--amber)':'transparent';
+  document.getElementById(`${prefix}-mode-tot`).style.color=mode==='tot'?'#fff':'var(--text2)';
+};
+
+window.calcFeeTotal=function(prefix, orig){
+  const fine=parseFloat(document.getElementById(`${prefix}-fine`)?.value.replace(',','.'))||0;
+  const interest=parseFloat(document.getElementById(`${prefix}-interest`)?.value.replace(',','.'))||0;
+  const res=document.getElementById(`${prefix}-sep-result`);
+  const totEl=document.getElementById(`${prefix}-sep-total`);
+  if((fine||interest)&&res&&totEl){res.style.display='block';totEl.textContent=fmt(orig+fine+interest);}
+  else if(res) res.style.display='none';
+};
+
+window.calcFeeFromTotal=function(prefix, orig){
+  const totalPaid=parseFloat(document.getElementById(`${prefix}-total-paid`)?.value.replace(',','.'))||0;
+  const res=document.getElementById(`${prefix}-tot-result`);
+  const fineEl=document.getElementById(`${prefix}-calc-fine`);
+  const intEl=document.getElementById(`${prefix}-calc-interest`);
+  if(totalPaid>orig&&res){
+    const diff=totalPaid-orig;
+    res.style.display='block';
+    // Split 50/50 as default display but save as single encargo
+    fineEl.textContent=fmt(diff*0.5);
+    intEl.textContent=fmt(diff*0.5);
+  } else if(res) res.style.display='none';
+};
+
+function getFeeValues(prefix, orig){
+  const mode=document.getElementById(`${prefix}-fee-mode`)?.value||'sep';
+  if(mode==='tot'){
+    const totalPaid=parseFloat(document.getElementById(`${prefix}-total-paid`)?.value.replace(',','.'))||0;
+    const diff=Math.max(0,totalPaid-orig);
+    return {fine:parseFloat((diff*0.5).toFixed(2)),interest:parseFloat((diff*0.5).toFixed(2))};
+  }
+  return {
+    fine:parseFloat(document.getElementById(`${prefix}-fine`)?.value.replace(',','.'))||0,
+    interest:parseFloat(document.getElementById(`${prefix}-interest`)?.value.replace(',','.'))||0
+  };
+}
+
+window.markPaid=function(id){
   const tx=(STATE.transactions||[]).find(t=>t.id===id);
   if(!tx) return;
   const today=todayStr();
   const late=today>tx.date;
-  if(late){
-    openModal(`
-      <div class="modal-title">✓ Confirmar Pagamento</div>
-      <div class="warn-box">⚠️ Pagamento após vencimento (${tx.date.split('-').reverse().join('/')}). Informe encargos se houver.</div>
-      <div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="paid-date" value="${today}"></div>
-      <div class="grid2">
-        <div class="fg"><label>Multa (R$)</label><input class="input mono" id="paid-fine" placeholder="0,00" value="0"></div>
-        <div class="fg"><label>Juros (R$)</label><input class="input mono" id="paid-interest" placeholder="0,00" value="0"></div>
-      </div>
-      <div class="flex gap8" style="justify-content:flex-end">
-        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-green" onclick="confirmMarkPaid('${id}')">Confirmar</button>
-      </div>`);
-  } else {
-    openModal(`
-      <div class="modal-title">✓ Confirmar Pagamento</div>
-      <div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="paid-date" value="${today}"></div>
-      <div class="flex gap8" style="justify-content:flex-end">
-        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-green" onclick="confirmMarkPaid('${id}')">Confirmar</button>
-      </div>`);
-  }
+  const warnHTML=late?`<div class="warn-box">⚠️ Pagamento após vencimento (${tx.date.split('-').reverse().join('/')}). Informe encargos se houver.</div>`:'';
+  openModal(feeModalHTML('✓ Confirmar Pagamento', warnHTML, 'p', tx.amount)+`
+    <div class="flex gap8" style="justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="confirmMarkPaid('${id}')">Confirmar</button>
+    </div>`);
 };
 
 window.confirmMarkPaid=async function(id){
-  const paidDate=document.getElementById('paid-date').value;
-  const fine=parseFloat(document.getElementById('paid-fine')?.value||0)||0;
-  const interest=parseFloat(document.getElementById('paid-interest')?.value||0)||0;
+  const paidDate=document.getElementById('p-date').value;
   const tx=(STATE.transactions||[]).find(t=>t.id===id);
   if(!tx) return;
+  const {fine,interest}=getFeeValues('p',tx.amount);
   await updateItem('transactions',{...tx,status:'paid',paidDate,fine,interest});
   closeModal(); refresh();
 };
@@ -645,14 +703,8 @@ window.markInstPaid=function(instId, month){
   const dueDate=`${month}-${day}`;
   const today=todayStr();
   const late=today>dueDate;
-  openModal(`
-    <div class="modal-title">✓ Confirmar Pagamento</div>
-    ${late?`<div class="warn-box">⚠️ Vencimento era ${dueDate.split('-').reverse().join('/')}. Informe encargos se houver.</div>`:''}
-    <div class="fg"><label>Data de pagamento</label><input class="input" type="date" id="ip-date" value="${today}"></div>
-    <div class="grid2">
-      <div class="fg"><label>Multa (R$)</label><input class="input mono" id="ip-fine" placeholder="0,00" value="0"></div>
-      <div class="fg"><label>Juros (R$)</label><input class="input mono" id="ip-interest" placeholder="0,00" value="0"></div>
-    </div>
+  const warnHTML=late?`<div class="warn-box">⚠️ Vencimento era ${dueDate.split('-').reverse().join('/')}. Informe encargos se houver.</div>`:'';
+  openModal(feeModalHTML('✓ Confirmar Pagamento da Parcela', warnHTML, 'ip', inst.amount)+`
     <div class="flex gap8" style="justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-green" onclick="confirmInstPaid('${instId}','${month}')">Confirmar</button>
@@ -661,11 +713,88 @@ window.markInstPaid=function(instId, month){
 
 window.confirmInstPaid=async function(instId,month){
   const paidDate=document.getElementById('ip-date').value;
-  const fine=parseFloat(document.getElementById('ip-fine')?.value||0)||0;
-  const interest=parseFloat(document.getElementById('ip-interest')?.value||0)||0;
+  const inst=(STATE.installments||[]).find(i=>i.id===instId);
+  if(!inst) return;
+  const {fine,interest}=getFeeValues('ip',inst.amount);
   const existing=(STATE.instPayments||[]).find(p=>p.instId===instId&&p.month===month);
   const item={id:existing?.id||genId(),instId,month,paidDate,fine,interest};
   await saveItem('instPayments',item);
+  closeModal(); refresh();
+};
+
+
+// Quick edit: adjust amount, date, description and status
+window.openQuickEdit=function(id){
+  const tx=(STATE.transactions||[]).find(t=>t.id===id);
+  if(!tx) return;
+  const isPaid=tx.status==='paid';
+  openModal(`
+    <div class="modal-title">✏ Editar Transação</div>
+    <div style="background:var(--bg);border-radius:8px;padding:10px 13px;margin-bottom:16px;font-size:12px;color:var(--text2)">
+      <span class="tag ${isPaid?'tag-paid':'tag-pending'}" style="margin-right:6px">${isPaid?'✓ pago':'⏳ pendente'}</span>
+      ${esc(tx.description)}
+    </div>
+    <div class="fg"><label>Descrição</label>
+      <input class="input" id="qe-desc" value="${esc(tx.description)}">
+    </div>
+    <div class="grid2">
+      <div class="fg"><label>Valor (R$)</label>
+        <input class="input mono" id="qe-amount" value="${tx.amount}" oninput="recalcQE('${id}')">
+      </div>
+      <div class="fg"><label>${isPaid?'Data de vencimento':'Vencimento'}</label>
+        <input class="input" type="date" id="qe-date" value="${tx.date}">
+      </div>
+    </div>
+    ${isPaid?`
+    <div class="grid2">
+      <div class="fg"><label>Data de pagamento</label>
+        <input class="input" type="date" id="qe-paid-date" value="${tx.paidDate||tx.date}">
+      </div>
+      <div class="fg"><label>Multa + Juros (R$)</label>
+        <input class="input mono" id="qe-fees" value="${((tx.fine||0)+(tx.interest||0))||''}" placeholder="0,00" oninput="recalcQE('${id}')">
+      </div>
+    </div>
+    <div id="qe-total-result" class="info-box" style="display:${((tx.fine||0)+(tx.interest||0))>0?'block':'none'}">
+      Total pago: <span class="mono" id="qe-total-val" style="font-weight:700">${fmt((tx.amount||0)+((tx.fine||0)+(tx.interest||0)))}</span>
+    </div>`:''}
+    <div class="fg"><label>Status</label>
+      <select class="select" id="qe-status">
+        <option value="pending" ${tx.status==='pending'?'selected':''}>⏳ Pendente</option>
+        <option value="paid" ${tx.status==='paid'?'selected':''}>✓ Pago</option>
+      </select>
+    </div>
+    <div class="flex gap8" style="justify-content:flex-end;margin-top:4px">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="saveQuickEdit('${id}')">Salvar</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('qe-amount')?.focus(),50);
+};
+
+window.recalcQE=function(id){
+  const tx=(STATE.transactions||[]).find(t=>t.id===id);
+  if(!tx||tx.status!=='paid') return;
+  const amount=parseFloat(document.getElementById('qe-amount')?.value.replace(',','.'))||0;
+  const fees=parseFloat(document.getElementById('qe-fees')?.value.replace(',','.'))||0;
+  const res=document.getElementById('qe-total-result');
+  const val=document.getElementById('qe-total-val');
+  if(res&&val){
+    res.style.display=fees>0?'block':'none';
+    val.textContent=fmt(amount+fees);
+  }
+};
+
+window.saveQuickEdit=async function(id){
+  const tx=(STATE.transactions||[]).find(t=>t.id===id);
+  if(!tx) return;
+  const desc=document.getElementById('qe-desc').value.trim()||tx.description;
+  const amount=parseFloat(document.getElementById('qe-amount').value.replace(',','.'))||tx.amount;
+  const date=document.getElementById('qe-date').value||tx.date;
+  const status=document.getElementById('qe-status').value;
+  const paidDate=document.getElementById('qe-paid-date')?.value||tx.paidDate;
+  const fees=parseFloat(document.getElementById('qe-fees')?.value.replace(',','.'))||0;
+  const fine=parseFloat((fees*0.5).toFixed(2));
+  const interest=parseFloat((fees*0.5).toFixed(2));
+  await updateItem('transactions',{...tx,description:desc,amount,date,status,paidDate,fine,interest});
   closeModal(); refresh();
 };
 
