@@ -508,16 +508,48 @@ VIEWS.dashboard=function(el){
       </div>
     </div>
 
-    <div class="card">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">Transações Recentes</div>
-      ${recent.length===0?`<div style="font-size:13px;color:var(--text2);padding:20px 0;text-align:center">Nenhuma transação em ${monthLabel(STATE.month)}</div>`:
-        recent.map(t=>{ const cat=cm[t.category]; return txRowHTML(t,cat,false); }).join('')}
+    <div class="grid2" style="margin-bottom:16px;align-items:start">
+      <!-- Category breakdown -->
+      <div class="card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">Gastos por Categoria</div>
+        ${(()=>{
+          const expTxs=txs.filter(t=>t.type==='expense');
+          const total=expTxs.reduce((s,t)=>s+t.amount,0);
+          if(!total) return '<div style="font-size:13px;color:var(--text2)">Nenhuma despesa em '+monthLabel(STATE.month)+'</div>';
+          const bycat={};
+          expTxs.forEach(t=>{bycat[t.category]=(bycat[t.category]||0)+t.amount;});
+          const sorted=Object.entries(bycat).sort((a,b)=>b[1]-a[1]).slice(0,7);
+          const colors=['var(--red)','var(--amber)','var(--purple)','var(--blue)','var(--green)','#EC4899','#0EA5E9'];
+          return sorted.map(([catId,val],i)=>{
+            const cat=cm[catId];
+            const pct=(val/total)*100;
+            return '<div style="margin-bottom:11px">'+
+              '<div class="flex-between" style="margin-bottom:4px">'+
+              '<span style="font-size:12px;font-weight:600">'+(cat?.i||'📦')+' '+(esc(cat?.l||catId))+'</span>'+
+              '<div class="flex gap8">'+
+              '<span class="mono" style="font-size:11px;color:var(--text2)">'+pct.toFixed(0)+'%</span>'+
+              '<span class="mono" style="font-size:12px;font-weight:700;color:'+colors[i%colors.length]+'">'+fmt(val)+'</span>'+
+              '</div></div>'+
+              '<div class="pbar"><div class="pfill" style="width:'+pct+'%;background:'+colors[i%colors.length]+'"></div></div>'+
+              '</div>';
+          }).join('');
+        })()}
+      </div>
+
+      <!-- Recent transactions -->
+      <div class="card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">Transações Recentes</div>
+        ${recent.length===0?`<div style="font-size:13px;color:var(--text2);padding:20px 0;text-align:center">Nenhuma transação em ${monthLabel(STATE.month)}</div>`:
+          recent.map(t=>{ const cat=cm[t.category]; return txRowHTML(t,cat,false); }).join('')}
+      </div>
     </div>`;
 };
 
 // ═══════════ TRANSACTIONS ═══════════
 let txFilter='all';
 let txStatusFilter='all';
+let txGroupMode='list'; // 'list' | 'card'
+let txCatFilter='';
 
 function txRowHTML(t, cat, showActions=true){
   const isPaid=t.status==='paid';
@@ -563,6 +595,7 @@ VIEWS.transactions=function(el){
   let filtered=allTxs;
   if(txFilter!=='all') filtered=filtered.filter(t=>t.type===txFilter);
   if(txStatusFilter!=='all') filtered=filtered.filter(t=>t.status===txStatusFilter);
+  if(txCatFilter) filtered=filtered.filter(t=>t.category===txCatFilter);
   filtered=filtered.sort((a,b)=>b.date.localeCompare(a.date));
 
   const income=allTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
@@ -572,6 +605,55 @@ VIEWS.transactions=function(el){
   const saldoReal=paidIncome-paidExpense;
   const previsao=income-expense;
   const cm=catMap();
+
+  // Category breakdown for expense pills
+  const expTxs=allTxs.filter(t=>t.type==='expense');
+  const totalExp=expTxs.reduce((s,t)=>s+t.amount,0);
+  const catTotals={};
+  expTxs.forEach(t=>{catTotals[t.category]=(catTotals[t.category]||0)+t.amount;});
+  const catsSorted=Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+
+  // Card grouping
+  function buildCardGroups(txList){
+    const cards=STATE.cards||[];
+    const groups=[];
+    // Group by card
+    cards.forEach(card=>{
+      const cardTxs=txList.filter(t=>t.walletId===('card_'+card.id));
+      if(cardTxs.length) groups.push({type:'card',card,txs:cardTxs,total:cardTxs.reduce((s,t)=>s+t.amount+(t.fine||0)+(t.interest||0),0)});
+    });
+    // Remaining (no card or account)
+    const cardIds=new Set(cards.map(c=>'card_'+c.id));
+    const rest=txList.filter(t=>!cardIds.has(t.walletId));
+    if(rest.length) groups.push({type:'other',txs:rest,total:rest.reduce((s,t)=>s+t.amount,0)});
+    return groups;
+  }
+
+  const cardGroupsHTML=()=>{
+    const groups=buildCardGroups(filtered);
+    if(!groups.length) return '<div class="empty-state"><div class="empty-icon">🗂</div><div class="empty-title">Nenhuma transação</div></div>';
+    return groups.map((g,gi)=>{
+      const isCard=g.type==='card';
+      const label=isCard?(g.card.icon||'💳')+' '+esc(g.card.name):'Sem cartão / conta';
+      const color=isCard?(g.card.color||'var(--purple)'):'var(--text2)';
+      return '<div class="card" style="margin-bottom:10px;padding:0;overflow:hidden">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;background:var(--card)" onclick="toggleCardGroup('+gi+')">'+
+        '<div class="flex gap10">'+
+        '<div style="width:36px;height:36px;border-radius:9px;background:'+color+'20;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">'+(isCard?(g.card.icon||'💳'):'📋')+'</div>'+
+        '<div>'+
+        '<div style="font-size:13px;font-weight:700">'+label+'</div>'+
+        '<div style="font-size:11px;color:var(--text2)">'+g.txs.length+' lançamentos</div>'+
+        '</div></div>'+
+        '<div class="flex gap10">'+
+        '<div class="mono" style="font-size:15px;font-weight:700;color:'+color+'">'+fmt(g.total)+'</div>'+
+        '<span id="cg-arrow-'+gi+'" style="color:var(--text2);font-size:16px;transition:transform .2s">▾</span>'+
+        '</div></div>'+
+        '<div id="cg-body-'+gi+'" style="border-top:1px solid var(--border);padding:0 18px;display:block">'+
+        g.txs.map(t=>txRowHTML(t,cm[t.category],true)).join('')+
+        '</div>'+
+        '</div>';
+    }).join('');
+  };
 
   el.innerHTML=`
     ${pageHeaderHTML('Transações',`${filtered.length} lançamentos`,`
@@ -585,17 +667,51 @@ VIEWS.transactions=function(el){
       ${statCardHTML('Previsão',previsao,previsao>=0?'var(--green)':'var(--red)','(todos os lançamentos)','📅')}
     </div>
 
-    <div class="flex gap8" style="margin-bottom:14px;flex-wrap:wrap">
-      ${[['all','Todos'],['income','Receitas'],['expense','Despesas']].map(([k,l])=>`<button class="filter-pill${txFilter===k?' active':''}" onclick="txFilter='${k}';refresh()">${l}</button>`).join('')}
-      <div style="width:1px;background:var(--border);margin:0 4px"></div>
-      ${[['all','Todos'],['paid','Pagos'],['pending','Pendentes']].map(([k,l])=>`<button class="filter-pill${txStatusFilter===k?' active':''}" onclick="txStatusFilter='${k}';refresh()">${l}</button>`).join('')}
+    <!-- Category pills -->
+    ${catsSorted.length>0?`<div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.6px;text-transform:uppercase;margin-bottom:8px">Por categoria</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="filter-pill${!txCatFilter?' active':''}" onclick="txCatFilter='';refresh()">Todas</button>
+        ${catsSorted.map(([catId,total])=>{
+          const cat=cm[catId];
+          const pct=totalExp>0?Math.round((total/totalExp)*100):0;
+          return `<button onclick="txCatFilter='${catId}';refresh()" style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;border:1.5px solid ${txCatFilter===catId?'var(--green)':'var(--border)'};background:${txCatFilter===catId?'var(--green-bg)':'var(--card)'};cursor:pointer;font-size:12px;font-weight:600;color:${txCatFilter===catId?'var(--green)':'var(--text)'}">
+            <span>${cat?.i||'📦'}</span>
+            <span>${esc(cat?.l||catId)}</span>
+            <span class="mono" style="font-size:10px;color:${txCatFilter===catId?'var(--green)':'var(--text2)'}">${fmt(total)}</span>
+            <span style="font-size:10px;color:var(--text2)">${pct}%</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- Mode toggle + status filters -->
+    <div class="flex-between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="flex gap8" style="flex-wrap:wrap">
+        ${[['all','Todos'],['income','Receitas'],['expense','Despesas']].map(([k,l])=>`<button class="filter-pill${txFilter===k?' active':''}" onclick="txFilter='${k}';refresh()">${l}</button>`).join('')}
+        <div style="width:1px;background:var(--border);margin:0 2px"></div>
+        ${[['all','Todos'],['paid','Pagos'],['pending','Pendentes']].map(([k,l])=>`<button class="filter-pill${txStatusFilter===k?' active':''}" onclick="txStatusFilter='${k}';refresh()">${l}</button>`).join('')}
+      </div>
+      <div class="flex gap6">
+        <button onclick="txGroupMode='list';refresh()" style="padding:5px 11px;border-radius:8px;border:1.5px solid ${txGroupMode==='list'?'var(--green)':'var(--border)'};background:${txGroupMode==='list'?'var(--green-bg)':'var(--card)'};font-size:12px;font-weight:700;color:${txGroupMode==='list'?'var(--green)':'var(--text2)'}">≡ Lista</button>
+        <button onclick="txGroupMode='card';refresh()" style="padding:5px 11px;border-radius:8px;border:1.5px solid ${txGroupMode==='card'?'var(--green)':'var(--border)'};background:${txGroupMode==='card'?'var(--green-bg)':'var(--card)'};font-size:12px;font-weight:700;color:${txGroupMode==='card'?'var(--green)':'var(--text2)'}">💳 Por cartão</button>
+      </div>
     </div>
 
-    <div class="card">
+    ${txGroupMode==='list'?`<div class="card">
       ${filtered.length===0?`<div class="empty-state"><div class="empty-icon">🗂</div><div class="empty-title">Nenhuma transação</div><div>Adicione ou importe via CSV</div></div>`:
         filtered.map(t=>{ const cat=cm[t.category]; return txRowHTML(t,cat,true); }).join('')}
-    </div>
+    </div>`:cardGroupsHTML()}
     <div style="font-size:12px;color:var(--text2);margin-top:8px">💡 CSV: <span class="mono">data, descrição, valor, tipo (income/expense), categoria</span></div>`;
+};
+
+window.toggleCardGroup=function(gi){
+  const body=document.getElementById('cg-body-'+gi);
+  const arrow=document.getElementById('cg-arrow-'+gi);
+  if(!body) return;
+  const open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  if(arrow) arrow.style.transform=open?'rotate(-90deg)':'rotate(0deg)';
 };
 
 // Mark real transaction as paid
